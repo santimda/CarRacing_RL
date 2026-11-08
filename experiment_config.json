@@ -1,0 +1,65 @@
+{
+  "environment": "CarRacing-v3",
+  "reward": "Gymnasium default for PPO and SAC; configured forward-speed shaping for DRQ-SAC",
+  "device": "cpu",
+  "training_seed": 42,
+  "validation_seeds": [43, 44, 45, 46, 47],
+  "demo_seed": 48,
+  "default_increment": 8192,
+  "smoke_timesteps": 8192,
+  "algorithms": {
+    "PPO": {
+      "settings": {
+        "n_steps": 2048,
+        "batch_size": 256,
+        "n_epochs": 4,
+        "learning_rate": 0.0003,
+        "clip_range": 0.2,
+        "device": "cpu"
+      }
+    },
+    "SAC": {
+      "settings": {
+        "learning_starts": 10000,
+        "buffer_size": 40000,
+        "batch_size": 64,
+        "train_freq": 4,
+        "gradient_steps": 1,
+        "ent_coef": "auto_0.1",
+        "device": "cpu"
+      },
+      "observation_stack": 4,
+      "action_mode": "three_action"
+    },
+    "DRQ-SAC": {
+      "settings": {
+        "learning_starts": 10000,
+        "buffer_size": 39000,
+        "batch_size": 64,
+        "train_freq": 4,
+        "gradient_steps": 1,
+        "ent_coef": "auto_0.1",
+        "augmentation_pad": 4,
+        "exploration_probability": 0.00,
+        "warmup_full_steering_probability": 0.2,
+        "device": "cpu"
+      },
+      "observation_stack": 4,
+      "action_mode": "three_action",
+      "reward_shaping": {
+        "speed_scale": 0.03,
+        "target_speed": 30.0,
+        "throttle_bonus": 0.02,
+        "brake_penalty": 0.4,
+        "lap_completion_bonus": 1000.0,
+        "steering_threshold": 0.15,
+        "steering_grace_steps": 15,
+        "steering_penalty": 0.01,
+        "steering_penalty_cap_steps": 20,
+        "no_progress_penalty": 0.02,
+        "no_progress_grace_steps": 8,
+        "no_progress_penalty_cap_steps": 20
+      }
+    }
+  }
+}

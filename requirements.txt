@@ -1,0 +1,6 @@
+gymnasium[box2d]==1.2.3
+stable-baselines3==2.9.0
+numpy==2.5.4
+imageio==2.37.0
+matplotlib==3.10.8
+tensorboard==2.20.0
