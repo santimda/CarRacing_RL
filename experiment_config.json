@@ -16,6 +16,15 @@
         "learning_rate": 0.0003,
         "clip_range": 0.2,
         "device": "cpu"
+      },
+      "resume_settings": {
+        "learning_rate_initial": 0.0001,
+        "learning_rate_final": 0.00002,
+        "clip_range": 0.1,
+        "target_kl": 0.02,
+        "max_log_std": -0.7,
+        "reset_log_std_optimizer_state": true,
+        "validation_interval": 20480
       }
     },
     "SAC": {

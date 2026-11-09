@@ -38,9 +38,39 @@ PANEL_CONFIG = {
             "title": "Episode length",
         },
         "entropy_loss": {
-            "show": False,
+            "show": True,
             "tag": "train/entropy_loss",
             "title": "Entropy loss",
+        },
+        "action_std": {
+            "show": True,
+            "tag": "train/std",
+            "title": "Mean action standard deviation",
+        },
+        "learning_rate": {
+            "show": True,
+            "tag": "train/learning_rate",
+            "title": "Learning rate",
+        },
+        "validation_return": {
+            "show": True,
+            "tag": "eval/mean_return",
+            "title": "Deterministic validation return",
+        },
+        "steering_std": {
+            "show": False,
+            "tag": "diagnostics/action_std_steering",
+            "title": "Steering standard deviation",
+        },
+        "gas_std": {
+            "show": False,
+            "tag": "diagnostics/action_std_gas",
+            "title": "Gas standard deviation",
+        },
+        "brake_std": {
+            "show": False,
+            "tag": "diagnostics/action_std_brake",
+            "title": "Brake standard deviation",
         },
         "policy_gradient_loss": {
             "show": False,

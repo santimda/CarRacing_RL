@@ -30,8 +30,27 @@ ALGORITHMS = {"PPO": PPO, "SAC": SAC, "DRQ-SAC": DrQSAC}
 OFF_POLICY_ALGORITHMS = {"SAC", "DRQ-SAC"}
 
 
-class AggressiveRewardWrapper(gym.Wrapper):
-    """Reward shaping used by the clean DRQ-SAC experiment."""
+class ContinuationLinearSchedule:
+    """Linear schedule normalized to one resumed learn() invocation."""
+
+    def __init__(
+        self, initial_value: float, final_value: float, initial_progress: float
+    ):
+        self.initial_value = float(initial_value)
+        self.final_value = float(final_value)
+        self.initial_progress = float(initial_progress)
+
+    def __call__(self, progress_remaining: float) -> float:
+        if self.initial_progress <= 0:
+            return self.final_value
+        fraction = min(
+            max(float(progress_remaining) / self.initial_progress, 0.0), 1.0
+        )
+        return self.final_value + fraction * (self.initial_value - self.final_value)
+
+
+class RewardWrapper(gym.Wrapper):
+    """Apply the configured reward shaping to an environment."""
 
     def __init__(self, env, reward_config: dict):
         super().__init__(env)
@@ -179,7 +198,7 @@ def make_env(
     if algorithm == "DRQ-SAC":
         if reward_config is None:
             raise ValueError("DRQ-SAC requires reward_config")
-        env = AggressiveRewardWrapper(env, reward_config)
+        env = RewardWrapper(env, reward_config)
         if action_mode != "three_action":
             raise ValueError("DRQ-SAC requires the native three_action control space")
     elif algorithm == "SAC":
@@ -304,6 +323,59 @@ def _load_model_kwargs(
     return kwargs
 
 
+def _configure_ppo_resume(model: PPO, settings: dict, timesteps: int) -> dict:
+    """Apply conservative fine-tuning settings to a loaded PPO model."""
+    initial_learning_rate = float(settings.get("learning_rate_initial", 1e-4))
+    final_learning_rate = float(settings.get("learning_rate_final", 2e-5))
+    clip_range = float(settings.get("clip_range", 0.1))
+    target_kl = float(settings.get("target_kl", 0.02))
+    max_log_std = float(settings.get("max_log_std", -0.7))
+    reset_log_std_optimizer_state = bool(
+        settings.get("reset_log_std_optimizer_state", True)
+    )
+    if initial_learning_rate <= 0 or final_learning_rate <= 0:
+        raise ValueError("PPO resume learning rates must be positive")
+    if final_learning_rate > initial_learning_rate:
+        raise ValueError("PPO resume final learning rate cannot exceed its initial value")
+    if not 0 < clip_range < 1:
+        raise ValueError("PPO resume clip_range must be between zero and one")
+    if target_kl <= 0:
+        raise ValueError("PPO resume target_kl must be positive")
+
+    start_timesteps = int(model.num_timesteps)
+    initial_progress = timesteps / (start_timesteps + timesteps)
+    schedule = ContinuationLinearSchedule(
+        initial_learning_rate, final_learning_rate, initial_progress
+    )
+    model.learning_rate = schedule
+    model.lr_schedule = schedule
+    model.clip_range = FloatSchedule(clip_range)
+    model.target_kl = target_kl
+
+    with torch.no_grad():
+        std_before = model.policy.log_std.exp().detach().cpu().tolist()
+        model.policy.log_std.clamp_(max=max_log_std)
+        std_after = model.policy.log_std.exp().detach().cpu().tolist()
+    optimizer_state_reset = False
+    if reset_log_std_optimizer_state:
+        optimizer_state_reset = (
+            model.policy.optimizer.state.pop(model.policy.log_std, None) is not None
+        )
+
+    return {
+        "learning_rate_initial": initial_learning_rate,
+        "learning_rate_final": final_learning_rate,
+        "clip_range": clip_range,
+        "target_kl": target_kl,
+        "max_log_std": max_log_std,
+        "std_before": std_before,
+        "std_after": std_after,
+        "log_std_optimizer_state_reset": optimizer_state_reset,
+        "schedule_start_timesteps": start_timesteps,
+        "schedule_requested_timesteps": timesteps,
+    }
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as model_file:
@@ -313,13 +385,31 @@ def file_sha256(path: Path) -> str:
 
 
 class ProgressCheckpointCallback(BaseCallback):
-    def __init__(self, output_dir: Path, start_timesteps: int, requested_timesteps: int):
+    def __init__(
+        self,
+        output_dir: Path,
+        start_timesteps: int,
+        requested_timesteps: int,
+        algorithm: str,
+        validation_seeds: list[int] | None = None,
+        validation_interval: int | None = None,
+        reward_config: dict | None = None,
+        observation_stack: int = 1,
+        action_mode: str = "three_action",
+    ):
         super().__init__(verbose=0)
         self.output_dir = output_dir
         self.start_timesteps = start_timesteps
         self.requested_timesteps = requested_timesteps
+        self.algorithm = algorithm
+        self.validation_seeds = validation_seeds or []
+        self.validation_interval = validation_interval
+        self.reward_config = reward_config
+        self.observation_stack = observation_stack
+        self.action_mode = action_mode
         self.next_report = min(512, requested_timesteps)
         self.next_checkpoint = 8192
+        self.next_validation = validation_interval
         self.started_at = 0.0
 
     def _on_training_start(self):
@@ -350,7 +440,16 @@ class ProgressCheckpointCallback(BaseCallback):
         if completed >= self.next_checkpoint:
             self._save_checkpoint()
             self.next_checkpoint += 8192
+        if self.next_validation is not None and completed >= self.next_validation:
+            self._run_validation()
+            self.next_validation += self.validation_interval
         return True
+
+    def _on_rollout_end(self):
+        if isinstance(self.model, PPO):
+            standard_deviations = self.model.policy.log_std.detach().exp().cpu().tolist()
+            for name, value in zip(("steering", "gas", "brake"), standard_deviations):
+                self.logger.record(f"diagnostics/action_std_{name}", float(value))
 
     def _on_training_end(self):
         self._save_checkpoint()
@@ -368,6 +467,60 @@ class ProgressCheckpointCallback(BaseCallback):
             shutil.rmtree(checkpoint)
         os.replace(temporary, checkpoint)
         print(f"Checkpoint saved at {self.num_timesteps:,} total steps.", flush=True)
+
+    def _run_validation(self):
+        episodes = []
+        for seed in self.validation_seeds:
+            env = make_env(
+                seed=seed,
+                algorithm=self.algorithm,
+                reward_config=self.reward_config,
+                observation_stack=self.observation_stack,
+                action_mode=self.action_mode,
+            )
+            try:
+                episodes.append(run_episode(env, seed, self.model, deterministic=True))
+            finally:
+                env.close()
+        returns = [episode["base_return"] for episode in episodes]
+        mean_return = float(np.mean(returns))
+        std_return = float(np.std(returns, ddof=1)) if len(returns) > 1 else 0.0
+        self.logger.record("eval/mean_return", mean_return)
+        self.logger.record("eval/std_return", std_return)
+        print(
+            f"Validation at {self.num_timesteps:,} steps: "
+            f"{mean_return:.2f} +/- {std_return:.2f}",
+            flush=True,
+        )
+
+        metadata_path = self.output_dir / "best_checkpoint.json"
+        previous = (
+            json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata_path.exists()
+            else None
+        )
+        if previous is not None and mean_return <= previous["validation_mean_return"]:
+            return
+        best_path = self.output_dir / "best_model.zip"
+        self.model.save(best_path)
+        save_json(
+            metadata_path,
+            {
+                "algorithm": self.algorithm,
+                "actual_timesteps": int(self.model.num_timesteps),
+                "validation_mean_return": mean_return,
+                "validation_std_return": std_return,
+                "validation_shaped_mean_return": float(
+                    np.mean([episode["shaped_return"] for episode in episodes])
+                ),
+                "validation_seeds": self.validation_seeds,
+                "model_path": str(best_path.relative_to(ROOT)),
+                "selection_metric": "mean deterministic original CarRacing return",
+                "observation_stack": self.observation_stack,
+                "action_mode": self.action_mode,
+            },
+        )
+        print(f"New best validation checkpoint: {mean_return:.2f}", flush=True)
 
 
 def _load_checkpoint(algorithm: str, output_dir: Path, env, settings: dict | None = None):
@@ -501,6 +654,7 @@ def train_and_evaluate(
     observation_stack: int = 1,
     action_mode: str = "three_action",
     resume: bool = False,
+    resume_settings: dict | None = None,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     env = make_env(
@@ -517,10 +671,42 @@ def train_and_evaluate(
         if resume
         else (None, 0)
     )
+    if resume and model is None:
+        env.close()
+        raise FileNotFoundError(
+            f"Cannot resume {algorithm}; no checkpoint found under {output_dir}"
+        )
     resumed = model is not None
+    resume_adjustments = None
     fresh_replay_warmup = 0
     if model is None:
         model = build_model(algorithm, env, training_seed, settings)
+    elif algorithm == "PPO" and resume_settings is not None:
+        checkpoint_model = output_dir / "latest_checkpoint" / "model.zip"
+        fallback_model = output_dir / "model.zip"
+        checkpoint_source = (
+            checkpoint_model if checkpoint_model.exists() else fallback_model
+        )
+        resume_adjustments = _configure_ppo_resume(model, resume_settings, timesteps)
+        resume_adjustments.update(
+            {
+                "source_model_path": str(checkpoint_source.relative_to(ROOT)),
+                "source_model_sha256": file_sha256(checkpoint_source),
+                "effective_n_steps": int(model.n_steps),
+                "effective_batch_size": int(model.batch_size),
+                "effective_n_epochs": int(model.n_epochs),
+            }
+        )
+        print(
+            "Applied PPO resume settings: "
+            f"lr {resume_adjustments['learning_rate_initial']:.1e} -> "
+            f"{resume_adjustments['learning_rate_final']:.1e}, "
+            f"clip_range={resume_adjustments['clip_range']}, "
+            f"target_kl={resume_adjustments['target_kl']}, "
+            f"std {resume_adjustments['std_before']} -> "
+            f"{resume_adjustments['std_after']}",
+            flush=True,
+        )
     elif algorithm in OFF_POLICY_ALGORITHMS:
         replay_path = output_dir / "latest_checkpoint" / "replay_buffer.pkl"
         if not replay_path.exists():
@@ -536,7 +722,22 @@ def train_and_evaluate(
     tensorboard_dir = output_dir / "tensorboard"
     tensorboard_dir.mkdir(parents=True, exist_ok=True)
     model.set_logger(configure(str(tensorboard_dir), ["tensorboard"]))
-    callback = ProgressCheckpointCallback(output_dir, start_timesteps, timesteps)
+    validation_interval = None
+    if resumed and algorithm == "PPO" and resume_settings is not None:
+        validation_interval = int(resume_settings.get("validation_interval", 20480))
+        if validation_interval <= 0:
+            raise ValueError("PPO resume validation_interval must be positive")
+    callback = ProgressCheckpointCallback(
+        output_dir,
+        start_timesteps,
+        timesteps,
+        algorithm,
+        validation_seeds=validation_seeds if validation_interval is not None else None,
+        validation_interval=validation_interval,
+        reward_config=reward_config,
+        observation_stack=observation_stack,
+        action_mode=action_mode,
+    )
     try:
         model.learn(
             total_timesteps=timesteps,
@@ -581,6 +782,7 @@ def train_and_evaluate(
     evaluation["starting_timesteps"] = start_timesteps
     evaluation["incremental_timesteps"] = int(model.num_timesteps) - start_timesteps
     evaluation["fresh_replay_warmup_steps"] = fresh_replay_warmup
+    evaluation["resume_adjustments"] = resume_adjustments
     evaluation["training_seconds"] = time.perf_counter() - start
     evaluation["tensorboard_plot"] = str(plot_path.relative_to(ROOT))
     evaluation["tensorboard_tags"] = tags

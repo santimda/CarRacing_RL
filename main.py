@@ -31,12 +31,20 @@ def load_config() -> dict:
     return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
+def algorithm_environment_options(config: dict, algorithm: str) -> dict:
+    algorithm_config = config["algorithms"][algorithm]
+    return {
+        "reward_config": algorithm_config.get("reward_shaping"),
+        "observation_stack": algorithm_config.get("observation_stack", 1),
+        "action_mode": algorithm_config.get("action_mode", "three_action"),
+    }
+
+
 def run_training(config: dict, algorithm: str, timesteps: int, resume: bool = False) -> dict:
     algorithm_config = config["algorithms"][algorithm]
     settings = algorithm_config["settings"]
-    reward_config = algorithm_config.get("reward_shaping")
-    observation_stack = algorithm_config.get("observation_stack", 1)
-    action_mode = algorithm_config.get("action_mode", "three_action")
+    environment_options = algorithm_environment_options(config, algorithm)
+    resume_settings = algorithm_config.get("resume_settings")
     directory = output_dir(algorithm)
     if not resume and directory.exists():
         shutil.rmtree(directory)
@@ -49,11 +57,10 @@ def run_training(config: dict, algorithm: str, timesteps: int, resume: bool = Fa
         validation_seeds=config["validation_seeds"],
         output_dir=directory,
         settings=settings,
-        reward_config=reward_config,
         demo_seed=config["demo_seed"],
-        observation_stack=observation_stack,
-        action_mode=action_mode,
         resume=resume,
+        resume_settings=resume_settings,
+        **environment_options,
     )
     history = list(previous.get("training_history", []))
     history.append(
@@ -131,9 +138,7 @@ def _render_best_gifs_for_result(algorithm, directory, model_path, result, confi
         model_path,
         result["episodes"],
         config["demo_seed"],
-        config["algorithms"][algorithm].get("reward_shaping"),
-        config["algorithms"][algorithm].get("observation_stack", 1),
-        config["algorithms"][algorithm].get("action_mode", "three_action"),
+        **algorithm_environment_options(config, algorithm),
     )
 
 
@@ -146,9 +151,7 @@ def run_evaluation(config: dict, algorithm: str, checkpoint: str) -> dict:
         algorithm,
         model_path,
         config["validation_seeds"],
-        config["algorithms"][algorithm].get("reward_shaping"),
-        observation_stack=config["algorithms"][algorithm].get("observation_stack", 1),
-        action_mode=config["algorithms"][algorithm].get("action_mode", "three_action"),
+        **algorithm_environment_options(config, algorithm),
     )
     print(
         f"{algorithm} original return: {result['mean_return']:.2f} ± "
