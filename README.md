@@ -48,7 +48,7 @@ forward speed, and acceleration, while discouraging exploitation strategies
 such as driving in circles by penalizing prolonged steering in the same
 direction. No-progress behavior is also penalized. Increasing `batch_size` and
 `buffer_size` was also important for a successful training, but higher values 
-are not possible in my personal computer. 
+are not possible in the local setup. 
 
 PPO was comparatively straightforward to train and much faster, but its policy 
 degraded after reaching a strong result. We resumed from the best PPO checkpoint with a lower
