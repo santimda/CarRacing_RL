@@ -11,47 +11,61 @@ The strongest policies are shown below on the shared demo seed `48`.
 <table>
   <tr>
     <th>PPO stabilized continuation</th>
+    <th>SAC</th>
     <th>DrQ-SAC</th>
   </tr>
   <tr>
     <td>
-      <img src="docs/assets/ppo-stabilized-demo.gif" alt="PPO stabilized policy" width="400">
-      <br><strong>862.7 +/- 20.4 validation return</strong>
+      <img src="docs/assets/ppo-stabilized-demo.gif" alt="PPO stabilized policy" width="280">
+      <br><strong>855.7 ± 81.3 holdout return</strong>
     </td>
     <td>
-      <img src="docs/assets/drq-sac-demo.gif" alt="DrQ-SAC policy" width="400">
-      <br><strong>796.1 +/- 37.0 validation return</strong>
+      <img src="docs/assets/sac-demo.gif" alt="SAC policy" width="280">
+      <br><strong>516.5 ± 262.5 holdout return</strong>
+    </td>
+    <td>
+      <img src="docs/assets/drq-sac-demo.gif" alt="DrQ-SAC policy" width="280">
+      <br><strong>806.1 ± 94.8 holdout return</strong>
     </td>
   </tr>
 </table>
 
-Checkpoint selection uses the mean deterministic original CarRacing return on
-five validation seeds. DrQ-SAC's shaped return is only a training objective and
-is not compared with PPO or SAC.
+The table reports deterministic evaluation on 50 fresh seeds (`100–149`),
+separate from the five seeds used for checkpoint selection. 
 
-| Model | Training steps | Training time | Validation return |
-| --- | ---: | ---: | ---: |
-| PPO original | 1.20 M | 1h 52min | 831.1 ± 26.0 |
-| PPO stabilized continuation | 1.32 M | ~2h 26min | 862.7 ± 20.4 |
-| DrQ-SAC | 420 k | 4h 47min | 796.1 ± 37.0 |
+| Model | Training steps | Training time | Holdout return | Lap completion |
+| --- | ---: | ---: | ---: | ---: |
+| PPO original | 1.20 M | 1h 52min | 847.8 ± 40.0 | 4/50 (8.0%) |
+| PPO stabilized continuation | 1.32 M | ~2h 26min | 855.7 ± 81.3 | 9/50 (18.0%) |
+| SAC | 262 k | 3h 50min | 516.5 ± 262.5 | 2/50 (4.0%) |
+| DrQ-SAC | 420 k | 4h 47min | 806.1 ± 94.8 | 1/50 (2.0%) |
 
-The stabilized PPO time includes the original run and the recorded continuation
-used to select the best checkpoint; the checkpoint was selected before that
-continuation finished.
+The PPO, SAC, and DrQ-SAC checkpoints were selected using the original
+five-seed validation set; the holdout seeds were not used for selection.
 
 ## Approach
 
-A standard pixel-based SAC baseline did not learn useful driving in this setup.
-It failed to coordinate steering and acceleration, so we introduced DrQ-SAC with
-image augmentation and shaped rewards. The shaping encourages throttle use,
-forward speed, and acceleration, while discouraging exploitation strategies
-such as driving in circles by penalizing prolonged steering in the same
-direction. No-progress behavior is also penalized. Increasing `batch_size` and
-`buffer_size` was also important for a successful training, but higher values 
-are not possible in the local setup. 
+A standard pixel-based SAC baseline learned slowly and remained less consistent
+than PPO and DrQ-SAC. We introduced DrQ-SAC with image augmentation and shaped
+rewards. The shaping encourages throttle use, forward speed, and acceleration,
+while discouraging exploitation strategies such as driving in circles by
+penalizing prolonged steering in the same direction. No-progress behavior is
+also penalized. Increasing `batch_size` and `buffer_size` was also important
+for successful training, but higher values are not possible in the local setup.
 
-PPO was comparatively straightforward to train and much faster, but its policy 
-degraded after reaching a strong result. We resumed from the best PPO checkpoint with a lower
+Both SAC variants use a 10,000-step warmup. Standard SAC samples steering, gas,
+and brake independently and uniformly from the full action space, so gas and
+brake can be active at the same time. DrQ-SAC uses structured warmup instead:
+steering is small 80% of the time and full-range 20% of the time; throttle is
+active 75% of the time and brake 25% of the time, never simultaneously. These
+actions are sampled independently at each step, so the warmup is not smooth or
+corner-aware and provides little sustained cornering behavior. The policy must
+learn that after warmup. Structured action injection is disabled after warmup
+in the current configuration (`exploration_probability=0.00`). The DrQ-SAC 
+variant learns significantly faster.
+
+PPO was straightforward to train and much faster, but its policy degraded after 
+reaching a strong result. We resumed from the best PPO checkpoint with a lower
 learning rate, tighter policy updates, and reduced action standard deviation.
 This stabilized continuation produced a modest improvement, while the earlier
 best checkpoint remained protected.
@@ -64,7 +78,17 @@ clipping, KL target, and reduced action standard deviation.
 
 ![PPO training metrics](docs/assets/ppo-training-metrics-combined.png)
 
-![DrQ-SAC training metrics](docs/assets/drq-sac-training-metrics.png)
+SAC has a very slow training curve with no significant progress in the first ~100k steps 
+but then improved steadily and reached its peak at ~450k steps. After that the agent 
+degraded. 
+
+<img src="docs/assets/sac-training-metrics.png" alt="SAC training metrics" width="800">
+
+DrQ-SAC trained significantly faster, reaching strong results after ~150k steps, although
+with significant dispersion and struggled to improve significantly after that.
+
+<img src="docs/assets/drq-sac-training-metrics.png" alt="DrQ-SAC training metrics" width="800">
+
 
 ## Technical Highlights
 
