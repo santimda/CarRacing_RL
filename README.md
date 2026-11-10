@@ -7,6 +7,7 @@ baseline, and a DrQ-SAC variant with task-specific reward shaping.
 ## Results
 
 The strongest policies are shown below on the shared demo seed `48`.
+The bottom HUD shows Gymnasium diagnostics: blue bars are wheel ABS sensors, green is steering position, red is angular velocity, and white is vehicle speed.
 
 <table>
   <tr>
@@ -21,7 +22,7 @@ The strongest policies are shown below on the shared demo seed `48`.
     </td>
     <td>
       <img src="docs/assets/sac-demo.gif" alt="SAC policy" width="280">
-      <br><strong>516.5 ± 262.5 holdout return</strong>
+      <br><strong>518.0 ± 165.2 holdout return</strong>
     </td>
     <td>
       <img src="docs/assets/drq-sac-demo.gif" alt="DrQ-SAC policy" width="280">
@@ -31,17 +32,17 @@ The strongest policies are shown below on the shared demo seed `48`.
 </table>
 
 The table reports deterministic evaluation on 50 fresh seeds (`100–149`),
-separate from the five seeds used for checkpoint selection. 
+separate from the ten seeds used for checkpoint selection.
 
 | Model | Training steps | Training time | Holdout return | Lap completion |
 | --- | ---: | ---: | ---: | ---: |
 | PPO original | 1.20 M | 1h 52min | 847.8 ± 40.0 | 4/50 (8.0%) |
 | PPO stabilized continuation | 1.32 M | ~2h 26min | 855.7 ± 81.3 | 9/50 (18.0%) |
-| SAC | 262 k | 3h 50min | 516.5 ± 262.5 | 2/50 (4.0%) |
+| SAC | 382 k | ~5h 30min | 518.0 ± 165.2 | 0/50 (0.0%) |
 | DrQ-SAC | 420 k | 4h 47min | 806.1 ± 94.8 | 1/50 (2.0%) |
 
-The PPO, SAC, and DrQ-SAC checkpoints were selected using the original
-five-seed validation set; the holdout seeds were not used for selection.
+The PPO, SAC, and DrQ-SAC checkpoints were selected using separate validation
+sets; the 50-seed holdout was not used for selection.
 
 ## Approach
 
@@ -78,9 +79,9 @@ clipping, KL target, and reduced action standard deviation.
 
 ![PPO training metrics](docs/assets/ppo-training-metrics-combined.png)
 
-SAC has a very slow training curve with no significant progress in the first ~100k steps 
-but then improved steadily and reached its peak at ~450k steps. After that the agent 
-degraded. 
+The SAC plot combines the original training through 262k steps with the
+continuation through 552k steps. The retained 382.4k checkpoint is reported
+above.
 
 <img src="docs/assets/sac-training-metrics.png" alt="SAC training metrics" width="800">
 
@@ -108,7 +109,7 @@ with significant dispersion and struggled to improve significantly after that.
 
 - Environment: `CarRacing-v3`, continuous native three-action control.
 - Training seed: `42`.
-- Validation seeds: `43, 44, 45, 46, 47`.
+- Validation seeds: `43, 44, 45, 46, 47, 49, 50, 51, 52, 53`.
 - Demonstration seed: `48`.
 - Device: CPU.
 - Generated models, replay buffers, TensorBoard logs, plots, and GIFs are stored

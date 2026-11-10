@@ -3,7 +3,7 @@
   "reward": "Gymnasium default for PPO and SAC; configured forward-speed shaping for DRQ-SAC",
   "device": "cpu",
   "training_seed": 42,
-  "validation_seeds": [43, 44, 45, 46, 47],
+  "validation_seeds": [43, 44, 45, 46, 47, 49, 50, 51, 52, 53],
   "demo_seed": 48,
   "default_increment": 8192,
   "smoke_timesteps": 8192,
